@@ -1,222 +1,112 @@
-#Load Data
-Experiment1bData <- read.csv("data/Experiment1bData.csv", header=T, stringsAsFactors = FALSE, na.strings=c("","NA")) #load data
-Experiment1bData$Participant <- factor(Experiment1bData$Participant) #make participant factor
+# Load Data
+Experiment1bData <- read.csv("data/Experiment1bData.csv", header=T, stringsAsFactors = FALSE, na.strings=c("","NA")) 
+Experiment1bData$Participant <- as.character(Experiment1bData$Participant) 
 
-##Creating long format data set for sampling behavior for full 
-#####
-Samp2 <- data.frame(rep(Experiment1bData$Participant,2), rep(Experiment1bData$Condition,2),
-                    c(Experiment1bData$in_samples, Experiment1bData$out_samples), factor(rep(c(1,2), each=905), labels = c("In", "Out")),
-                    rep(Experiment1bData$Val, 2), rep(Experiment1bData$Group, 2), rep(Experiment1bData$firstSample, 2))
+# Creating long format data set for sampling behavior
+Samp2 <- Experiment1bData %>%
+  tidyr::pivot_longer(cols = c(in_samples, out_samples),
+                      names_to = "Samp_Group",
+                      values_to = "n_trials") %>%
+  mutate(Samp_Group = factor(Samp_Group, levels = c("in_samples", "out_samples"), labels = c("In", "Out")))
 
-names(Samp2) <- c("Participant", "Condition", "n_trials", "Samp_Group", "Valence", "Group", "firstSample")
+# Creating a long format data set to look at evaluations
+Evaluation.in.out2 <- Experiment1bData %>%
+  tidyr::pivot_longer(cols = c(In.Est, Out.Est),
+                      names_to = "Evaluated.Group",
+                      values_to = "P.Estimates") %>%
+  mutate(Evaluated.Group = factor(Evaluated.Group, levels = c("In.Est", "Out.Est"), labels = c("In", "Out")))
 
-##Making sampled group into character so that it can be effects coded
-Samp2$Samp_GroupString <- as.character(Samp2$Samp_Group)
-Samp2$GroupString <- as.character(Samp2$Group)
-Samp2$ValenceString <- as.character(Samp2$Valence)
+# Effects and Dummy coding categorical predictors for the sampling models
+Samp2 <- Samp2 %>%
+  mutate(Condition = factor(Condition, levels = 1:3, labels = c("Worse", "Same", "Better")),
+         Condition_c = if_else(Condition == "Worse", -1, if_else(Condition == "Same", 0, 1)),
+         Condition_c_eff = factor(Condition_c),
+         Condition_c_dum = Condition) %>%
+  fastDummies::dummy_cols(select_columns = "Condition_c_dum", remove_first_dummy = TRUE)
 
-#####Creating a long format data set to look at Point-Estimates (DV) 
-Eval2 <- data.frame(rep(Experiment1bData$Participant,2), rep(Experiment1bData$Condition,2),
-                    c(Experiment1bData$In.Est, Experiment1bData$Out.Est), factor(rep(c(1,2), each=905), labels = c("In", "Out")),
-                    rep(Experiment1bData$Val, 2), rep(Experiment1bData$Group, 2))
+# Effects and Dummy coding categorical predictors for the point-estimate models.
+Evaluation.in.out2 <- Evaluation.in.out2 %>%
+  mutate(Condition = factor(Condition, levels = 1:3, labels = c("Worse", "Same", "Better")),
+         Condition_c = if_else(Condition == "Worse", -1, if_else(Condition == "Same", 0, 1)),
+         Condition_c_eff = factor(Condition_c),
+         Condition_c_dum = Condition) %>%
+  fastDummies::dummy_cols(select_columns = "Condition_c_dum", remove_first_dummy = TRUE)
 
-##Ranaming the variables 
-names(Eval2) <- c("Participant", "Condition",  "P.Estimates", "Evaluated.Group", "Valence", "Group")
+# First sample model
+Experiment1bData$First.Sample[Experiment1bData$First.Sample==-1] <- 0
+Experiment1bData$First.Sample <- as.numeric(as.character(Experiment1bData$First.Sample))
+Exp1.binom.test <- binom.test(length(Experiment1bData$First.Sample) - sum(Experiment1bData$First.Sample), length(Experiment1bData$First.Sample), p =.5)
 
-##Making sampled group into character so that it can be effects coded
-Eval2$Evaluated.GroupString <- as.character(Eval2$Evaluated.Group)
-#Eval2$diff_sourceString <- as.character(Eval2$diff_source)
-Eval2$GroupString <- as.character(Eval2$Group)
-Eval2$ValenceString <- as.character(Eval2$Valence)
-#####
+# Define a function to build models
+build_model <- function(base_model, variables) {
+  model_list <- list()
+  model <- base_model
+  model_list[["Baseline"]] <- model
+  for (variable in variables) {
+    formula <- paste(". ~ . + ", variable)
+    model <- update(model, formula)
+    model_list[[variable]] <- model
+  }
+  return(model_list)
+}
 
-#Below is all the effects coding
-######
-#Change conditions to 1 2 3 for clarity
-Samp2$Condition[Samp2$Condition == 1] <- "Worse"
-Samp2$Condition[Samp2$Condition == 2] <- "Same"
-Samp2$Condition[Samp2$Condition == 3] <- "Better"
+# Variables to add
+variables_to_add <- c("Samp_GroupB_dum", "Valence_eff", "Condition_c_eff", 
+                      "Group_eff", "Samp_GroupB_dum:Valence_eff", 
+                      "Samp_GroupB_dum:Condition_c_eff", 
+                      "Valence_eff:Condition_c_eff", 
+                      "Samp_GroupB_dum:Condition_c_eff:Valence_eff", 
+                      "Samp_GroupB_dum*Valence_eff*Condition_c_eff*Group_eff")
+# Sampling models
+Exp1b.M1.Baseline <- glmer(n_trials~1+  (1|Participant), data = Samp2, family = 'poisson',control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun=2e5)))
+Exp1b.M1.models <- build_model(Exp1b.M1.Baseline, variables_to_add)
+Exp1b.effects <- anova(Exp1b.M1.models)
+Exp1b.coefficients <- summary(Exp1b.M1.models[["Full"]])
 
-#Effects + dummy coding, let's call it _c.
-Samp2$Condition_c[Samp2$Condition == "Worse"] <- -1
-Samp2$Condition_c[Samp2$Condition == "Same"] <- 0
-Samp2$Condition_c[Samp2$Condition == "Better"] <- 1
-Samp2$Condition_c_eff <- factor(Samp2$Condition_c)
-Samp2$Condition_c_dum <- factor(Samp2$Condition,
-                                levels = c("Worse", "Same", "Better"))
+# Eval models
+Exp1b.M2.Baseline <- lmer(P.Estimates~1+  (1|Participant), data = Evaluation.in.out2, control=lmerControl(check.conv.singular = .makeCC(action = "ignore",  tol = 1e-4)))
+Exp1b.M2.models <- build_model(Exp1b.M2.Baseline, variables_to_add)
+Exp1b.M2.effects <- anova(Exp1b.M2.models)
+Exp1b.M2.coef <- summary(Exp1b.M2.models[["Full"]])
 
-#effects + dummy coding In and Out group with out as thro-away (Samp_Group)
-Samp2$Samp_GroupB_eff <- Samp2$Samp_GroupString
-Samp2$Samp_GroupB_dum <- Samp2$Samp_GroupString
-Samp2$Samp_GroupB_eff <- as.factor(Samp2$Samp_GroupB_eff)
-Samp2$Samp_GroupB_dum <- as.factor(Samp2$Samp_GroupB_dum)
-Samp2$Samp_GroupB_eff <- factor(Samp2$Samp_GroupB_eff, 
-                                levels = c("In", "Out"))
-Samp2$Samp_GroupB_dum <- factor(Samp2$Samp_GroupB_dum, 
-                                levels = c("In", "Out"))
+# Evaluations
+emm_SampGbyVal <- emmeans(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]], ~ Valence_eff:Evaluated.Group_eff, type = "response", lmer.df = "satterthwaite")
+contrast(emm_SampGbyVal, simple = "Evaluated.Group_eff")
+eff_size(emm_SampGbyVal, sigma = sigma(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]]), edf = df.residual(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]]))
 
-#effects + dummy coding group so that Rep is throw-away (Group)
-Samp2$Group_dum <- as.factor(Samp2$Group)
-Samp2$Group_eff <- as.factor(Samp2$Group)
+emm_SampGbyCond <- emmeans(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]], ~ Condition_c_eff:Evaluated.Group_eff, type = "response", lmer.df = "satterthwaite")
+contrast(emm_SampGbyCond, simple = "Evaluated.Group_eff")
+eff_size(emm_SampGbyCond, sigma = sigma(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]]), edf = df.residual(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]]))
 
-#effects + dummy coding group so that Dem is reference (Group1)
-Samp2$Group_eff1 <- as.factor(Samp2$Group)
-Samp2$Group_dum1 <- as.factor(Samp2$Group)
+# Contrasts for different conditions
+conditions <- c("Better", "Worse", "Same")
+contrast_list <- lapply(conditions, function(cond) {
+  subset_data <- subset(Evaluation.in.out2, subset=Evaluation.in.out2$Condition == cond)
+  t.test(P.Estimates~Evaluated.Group, data = subset_data, paired = F)
+  cohen.d(P.Estimates~Evaluated.Group, data = subset_data)
+})
+names(contrast_list) <- conditions
 
-#coding valence
-Samp2$Valence_eff <- Samp2$ValenceString
-Samp2$Valence_dum <- Samp2$ValenceString
-Samp2$Valence_eff <- as.factor(Samp2$Valence_eff) 
-Samp2$Valence_dum <- as.factor(Samp2$Valence_dum)
+# Descriptives and simple contrasts
+Exp1b.contrasts.samp <- describeBy(Samp2$n_trials, Samp2$Samp_Group)
+grouping_vars <- list(Evaluation.in.out2$Evaluated.Group, Evaluation.in.out2$Valence)
+Exp1b.contrasts <- lapply(grouping_vars, function(g) describeBy(Evaluation.in.out2$P.Estimates, g))
 
-##Making the contrasts with dummy alternatives
-contrasts(Samp2$Condition_c_eff) <-contr.sum(3)
-contrasts(Samp2$Condition_c_dum) <-contr.sum(3)
-contrasts(Samp2$Condition_c_dum) <- contr.treatment(3, base = 3)
-colnames(contrasts(Samp2$Condition_c_eff)) = c("Worse", "Same")
-colnames(contrasts(Samp2$Condition_c_dum)) = c("Worse", "Same")
+# Contrasts
+contrast_vars <- list(Evaluated.Group_eff, Valence_eff)
+contrasts <- lapply(contrast_vars, function(var) {
+  emmeans(Exp1b.M2.models[[var]], specs = pairwise ~ var, type = "response")
+})
 
-contrasts(Samp2$Samp_GroupB_eff) <-contr.sum(2)
-contrasts(Samp2$Samp_GroupB_dum) <-contr.sum(2)
-contrasts(Samp2$Samp_GroupB_dum) <- contr.treatment(2, base = 2)
-colnames(contrasts(Samp2$Samp_GroupB_eff)) = c("In.Group")
-colnames(contrasts(Samp2$Samp_GroupB_dum)) = c("In.Group")
+# Interaction of Eval by Valence
+emm_SampGbyVal <- emmeans(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]], ~ Evaluated.Group_eff:Valence_eff, type = "response", lmer.df = "satterthwaite")
+Exp1b.EvalValContrast <- contrast(emm_SampGbyVal, "eff", by = "Evaluated.Group_eff")        
+Exp1b.EvalValContrast_d <- eff_size(emm_SampGbyVal, sigma = sigma(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]]), edf = df.residual(Exp1b.M2.models[["Samp_GroupB_dum:Valence_eff"]]))
 
-#change the dummy code reference group to DEM 
-contrasts(Samp2$Group_dum) <-contr.treatment(2, base = 2)
-contrasts(Samp2$Group_eff) <- contr.sum(2)
-colnames(contrasts(Samp2$Group_eff)) = c("Dem")
-colnames(contrasts(Samp2$Group_dum)) = c("Dem")
-
-#change the dummy code reference to REP
-contrasts(Samp2$Group_dum1) <-contr.treatment(2, base = 1)
-colnames(contrasts(Samp2$Group_dum1)) = c("Rep")
-
-contrasts(Samp2$Valence_eff) <-contr.sum(2)
-contrasts(Samp2$Valence_dum) <-contr.sum(2)
-contrasts(Samp2$Valence_dum) <- contr.treatment(2, base = 2)
-colnames(contrasts(Samp2$Valence_eff)) = c("Neg")
-colnames(contrasts(Samp2$Valence_dum)) = c("Neg")
-
-#Change conditions to 1 2 3 for clarity
-Eval2$Condition[Eval2$Condition == 1] <- "Worse"
-Eval2$Condition[Eval2$Condition == 2] <- "Same"
-Eval2$Condition[Eval2$Condition == 3] <- "Better"
-
-Eval2$Condition_c[Eval2$Condition == "Worse"] <- -1
-Eval2$Condition_c[Eval2$Condition == "Same"] <- 0
-Eval2$Condition_c[Eval2$Condition == "Better"] <- 1
-Eval2$Condition_c_eff <- factor(Eval2$Condition_c)
-Eval2$Condition_c_dum <- factor(Eval2$Condition,
-                                levels = c("Worse", "Same", "Better"))
-
-Eval2$Evaluated.Group_eff <- Eval2$Evaluated.GroupString
-Eval2$Evaluated.Group_dum <- Eval2$Evaluated.GroupString
-Eval2$Evaluated.Group_eff <- as.factor(Eval2$Evaluated.Group_eff)
-Eval2$Evaluated.Group_dum <- as.factor(Eval2$Evaluated.Group_dum)
-Eval2$Evaluated.Group_eff <- factor(Eval2$Evaluated.Group_eff, 
-                                    levels = c("In", "Out"))
-Eval2$Evaluated.Group_dum <- factor(Eval2$Evaluated.Group_dum, 
-                                    levels = c("In", "Out"))
-
-Eval2$Group_eff <- as.factor(Eval2$Group)
-Eval2$Group_dum <- as.factor(Eval2$Group)
-
-Eval2$Valence_eff <- Eval2$ValenceString
-Eval2$Valence_dum <- Eval2$ValenceString
-
-Eval2$Valence_eff <- as.factor(Eval2$Valence_eff) 
-Eval2$Valence_dum <- as.factor(Eval2$Valence_dum) 
-
-##Making the contrasts with dummy alternatives
-contrasts(Eval2$Condition_c_eff) <-contr.sum(3)
-contrasts(Eval2$Condition_c_dum) <-contr.sum(3)
-contrasts(Eval2$Condition_c_dum) <- contr.treatment(3, base = 3)
-colnames(contrasts(Eval2$Condition_c_eff)) = c("Worse", "Same")
-colnames(contrasts(Eval2$Condition_c_dum)) = c("Worse", "Same")
-
-contrasts(Eval2$Evaluated.Group_eff) <-contr.sum(2)
-contrasts(Eval2$Evaluated.Group_dum) <-contr.sum(2)
-contrasts(Eval2$Evaluated.Group_dum) <- contr.treatment(2, base = 2)
-colnames(contrasts(Eval2$Evaluated.Group_eff)) = c("In.Group")
-contrasts(Eval2$Valence_eff) <-contr.sum(2)
-contrasts(Eval2$Valence_dum) <-contr.sum(2)
-contrasts(Eval2$Valence_dum) <- contr.treatment(2, base = 2)
-colnames(contrasts(Eval2$Valence_eff)) = c("Neg")
-colnames(contrasts(Eval2$Valence_dum)) = c("Neg") 
-#######
-
-#first sample model
-#####
-Experiment1bData$firstSample[Experiment1bData$firstSample==-1] <- 0
-Experiment1bData$firstSample <- as.numeric(as.character(Experiment1bData$firstSample))
-Exp2.binom.test <- binom.test(length(Experiment1bData$firstSample) - sum(Experiment1bData$firstSample), length(Experiment1bData$firstSample), p =.5)
-#####
-
-#Sampling Models
-#####
-Exp2.M1.Baseline <- glmer(n_trials~1+  (1|Participant), data = Samp2, family = 'poisson',control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun=2e5)))
-Exp2.disp <- dispersion_glmer(Exp2.M1.Baseline) # no evidence for overdispersion as it is not > 1.4
-
-Exp2.M1.SampG <- update(Exp2.M1.Baseline, .~. + Samp_GroupB_dum)
-Exp2.M1.Valence <- update(Exp2.M1.SampG, .~. + Valence_eff)
-Exp2.M1.Cond <- update(Exp2.M1.Valence, .~. + Condition_c_eff)
-Exp2.M1.PolAff <- update(Exp2.M1.Cond, .~. + Group_eff)
-Exp2.M1.SampGbyVal <- update(Exp2.M1.PolAff, .~. + Samp_GroupB_dum:Valence_eff)
-Exp2.M1.SampGbyCond <- update(Exp2.M1.SampGbyVal, .~. + Samp_GroupB_dum:Condition_c_eff)
-Exp2.M1.CondbyVal <- update(Exp2.M1.SampGbyCond, .~. + Valence_eff:Condition_c_eff)
-Exp2.M1.SampGbyCondbyVal <- update(Exp2.M1.CondbyVal, .~. + Samp_GroupB_dum:Condition_c_eff:Valence_eff)
-Exp2.M1.Full <- update(Exp2.M1.SampGbyCondbyVal, .~. + Samp_GroupB_dum*Valence_eff*Condition_c_eff*Group_eff)
-
-Exp2.effects <- anova(Exp2.M1.Baseline,Exp2.M1.SampG, Exp2.M1.Valence, Exp2.M1.Cond, Exp2.M1.PolAff, Exp2.M1.SampGbyVal, Exp2.M1.SampGbyCond, Exp2.M1.CondbyVal, Exp2.M1.SampGbyCondbyVal, Exp2.M1.Full)
-Exp2.coefficients <- summary(Exp2.M1.Full)
-#####
-
-#Eval Models
-#####
-Exp2.effects <- anova(Exp2.M1.Baseline,Exp2.M1.SampG, Exp2.M1.Valence, Exp2.M1.Cond, Exp2.M1.PolAff, Exp2.M1.SampGbyVal, Exp2.M1.SampGbyCond, Exp2.M1.CondbyVal, Exp2.M1.SampGbyCondbyVal, Exp2.M1.Full)
-Exp2.coefficients <- summary(Exp2.M1.Full)
-#qqnorm(resid(Exp2.M1.Baseline), main="normal qq-plot, residuals")
-
-#eval Models for 
-Exp2.M2.Baseline <- lmer(P.Estimates~1+  (1|Participant), data = Eval2)
-Exp2.M2.Affil <- update(Exp2.M2.Baseline, .~. + Group_eff)
-Exp2.M2.SampG <- update(Exp2.M2.Baseline, .~. + Evaluated.Group_eff)
-Exp2.M2.Valence <- update(Exp2.M2.SampG, .~. + Valence_eff)
-Exp2.M2.Cond <- update(Exp2.M2.Valence, .~. + Condition_c_eff)
-Exp2.M2.PolAff <- update(Exp2.M2.Cond, .~. + Group_eff)
-Exp2.M2.SampGbyVal <- update(Exp2.M2.PolAff, .~. + Evaluated.Group_eff:Valence_eff)
-Exp2.M2.SampGbyCond <- update(Exp2.M2.SampGbyVal, .~. + Evaluated.Group_eff:Condition_c_eff)
-Exp2.M2.CondbyVal <- update(Exp2.M2.SampGbyCond, .~. + Valence_eff:Condition_c_eff)
-Exp2.M2.SampGbyCondbyVal <- update(Exp2.M2.CondbyVal, .~. + Evaluated.Group_eff:Condition_c_eff:Valence_eff)
-Exp2.M2.Full <- suppressMessages(update(Exp2.M2.SampGbyCondbyVal, .~. + Evaluated.Group_eff:Valence_eff:Condition_c_eff:Group_eff))
-
-Exp2.M2.effects <- anova(Exp2.M2.Baseline,Exp2.M2.SampG, Exp2.M2.Valence, Exp2.M2.Cond, Exp2.M2.PolAff, Exp2.M2.SampGbyVal, Exp2.M2.SampGbyCond,
-      Exp2.M2.CondbyVal,Exp2.M2.SampGbyCondbyVal, Exp2.M2.Full )
-Exp2.M2.coefficients <- summary(Exp2.M2.Full)
-
-#Contrasts
-
-#simple contrasts
-#####
-emm <- emmeans(Exp2.M2.SampGbyVal, ~ Valence_eff:Evaluated.Group_eff, type = "response", lmer.df = "satterthwaite")
-Exp2.ValContrast <- contrast(emm, simple = "Evaluated.Group_eff")
-Exp2.ValContrast_d <- eff_size(emm, sigma = sigma(Exp2.M2.SampGbyVal), edf = df.residual(Exp2.M2.SampGbyVal))
-
-emm <- emmeans(Exp2.M2.SampGbyCond, ~ Condition_c_eff:Evaluated.Group_eff, type = "response", lmer.df = "satterthwaite")
-Exp2.CondGroupContrast <- contrast(emm, simple = "Evaluated.Group_eff")
-Exp2.CondGroupContrast_d <- eff_size(emm, sigma = sigma(Exp2.M2.SampGbyCond), edf = df.residual(Exp2.M2.SampGbyCond))
-#####
-
-#descriptives for samples
-#####
-Exp2.contrasts.samp <- describeBy(Samp2$n_trials, Samp2$Samp_Group)
-#####
-
-#Descriptives for evaluations
-#####
-Exp2.contrasts.EvalbyGroup <- describeBy(Eval2$P.Estimates, Eval2$Evaluated.Group)
-Exp2.contrasts.EvalbyValence <- describeBy(Eval2$P.Estimates, Eval2$Valence)
+# Interaction of Condition by Eval group
+emm_SampGbyCond <- emmeans(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]], ~ Condition_c_eff:Evaluated.Group_eff, type = "response", lmer.df = "satterthwaite")
+Exp1b.evalCondContrast <- contrast(emm_SampGbyCond, "eff", by = "Condition_c_eff")          
+Exp1b.evalCondContrast_d <- eff_size(emm_SampGbyCond, sigma = sigma(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]]), edf = df.residual(Exp1b.M2.models[["Samp_GroupB_dum:Condition_c_eff"]]))
 
 
 ##Visuals for first sample
@@ -279,7 +169,7 @@ moreIngroup2plot + theme(
 
 #Visuals for evals
 #####
-##**Plotting Point-estimates for both with main effects of Condition**
+##Plotting Point-estimates for both with main effects of Condition
 fullStudy2Eval <- Eval2
 fullStudy2Eval$Condition[fullStudy2Eval$Condition=="Better"] <- 3
 fullStudy2Eval$Condition[fullStudy2Eval$Condition=="Same"] <- 2
@@ -342,7 +232,7 @@ means_cond_Cond2Plot <- means_cond_Cond2Plot+ theme(
 #####
 
 #####Print the results in the order they appear in the manuscript
-print('RESULTS FROM EXPERIMENT 1')
+print('RESULTS FROM EXPERIMENT 1b')
 print('Binomial test for first sample')
 print(Exp2.binom.test)
 print(Exp2.firstSamplePlot)

@@ -1,29 +1,14 @@
-#required packages. Make sure to install if you do not have them or else these scripts may not run correctly. 
-require(psych)
-require(plyr)
-require(ggplot2)
-require(lme4)
-require(reshape2)
-require(tidyverse)
-library(ggpubr)
-library(sjPlot)
-library(ggeffects)
-require(MASS)
-library(lmerTest)
-library(blmeco) 
-library(Rmisc)
-library(numDeriv)
-library(effsize)
-library(simr)
-library(survival)
-library(survminer)
-library(lubridate)
-library(broom)
-library(gtsummary)
-library(knitr)
-library(rstatix)
-library(coxme)
-library(car)
-library(effsize)
-library(emmeans)
+# Load groundhog
+library(groundhog)
 
+# Specify the packages required
+pkgs <-  c("psych", "plyr", "ggplot2", "lme4", "reshape2", "tidyverse", "ggpubr", 
+           "sjPlot", "ggeffects", "MASS", "lmerTest", "blmeco", "Rmisc", "numDeriv",
+           "effsize", "simr", "survival", "survminer", "lubridate", "broom", "gtsummary", 
+           "knitr", "rstatix", "coxme", "car", "emmeans", "fastDummies")
+
+# Set groundhog day
+groundhog.day <- '2021-05-22'
+
+# Load libraries with groundhog
+groundhog.library(pkgs, groundhog.day)
